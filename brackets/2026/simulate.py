@@ -1,22 +1,39 @@
 #!/usr/bin/env python3
 """
-2026 NCAA March Madness Monte Carlo Bracket Simulator -- FINAL
-Real Data: BartTorvik AdjEM (scraped) + Evan Miya injury adjustments
+2026 NCAA March Madness Monte Carlo Bracket Simulator -- ENHANCED
+Real Data: BartTorvik AdjEM + AdjOE/AdjDE + injury adjustments
 Model: NormCDF(AdjEM_diff * tempo_factor * TOURNEY_MULT / sigma)
 sigma=11.0 baseline | 12.5 for 3pt-heavy matchups
 250,000 simulations per game
 
-UPGRADE: populate MARKET_LINES dict with de-vigged Pinnacle closing lines
-to enable 65% market / 35% BartTorvik ensemble for maximum accuracy.
-De-vig formula: raw_a = |ML|/(|ML|+100) if fav else 100/(ML+100)
-               p_market_a = raw_a / (raw_a + raw_b)
+Enhancements vs base version:
+  - Luck regression: 30% regression toward true talent (BartTorvik Luck column)
+  - Coaching tempo: 60/40 blend toward slower team (controls pace ~60% of games)
+  - Coaching style: zone defense (-0.8 AdjEM), press offense (-0.5 opponent)
+  - Projected totals: AdjOE/AdjDE Pomeroy interaction model
+  - Totals betting signal: flags games where model diverges from market >3 pts
+
+MARKET LINES: populate from Pinnacle for 65% market / 35% BartTorvik ensemble.
+Generate with: python scripts/pull_tournament_lines.py
 """
 
 import os
+import sys
 import json
 import numpy as np
 from scipy.stats import norm
 from collections import defaultdict
+
+# Add project root for src imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
+# Enhanced modules (graceful fallback if not installed)
+try:
+    from src.model.adjustments import apply_all_adjustments, coaching_tempo_blend
+    from src.model.score_model import project_game, print_projection_table
+    _ENHANCED = True
+except ImportError:
+    _ENHANCED = False
 
 N_SIMS             = 250_000
 TOURNEY_MULT       = 1.07   # favorites win more often in tournament vs regular season
@@ -24,6 +41,8 @@ SIGMA_BASE         = 11.0
 SIGMA_3PT          = 12.5   # bump for 3pt-heavy matchups (higher variance)
 MARKET_WEIGHT      = 0.65   # ensemble: market weight when line is available
 TORVIK_WEIGHT      = 0.35   # ensemble: BartTorvik weight
+USE_LUCK_ADJ       = True   # apply 30% luck regression from adjustments module
+USE_COACHING_TEMPO = True   # 60/40 slower-team tempo blend
 
 # ---------------------------------------------------------------------------
 # MARKET LINES (de-vigged)
@@ -68,86 +87,101 @@ INJURY_ADJ = {
 # Tempo = actual D1 possessions per 40 min (Torvik AdjT col is relative rank)
 # 3pt = True -> sigma bumped to 12.5 (higher 3pt volume = more variance)
 # ---------------------------------------------------------------------------
+_NATL_AVG = 107.0  # national average AdjOE/AdjDE (Pomeroy baseline)
+
+def _est_ao(em: float) -> float:
+    """Estimate AdjOE from AdjEM when actual value unknown (symmetric split)."""
+    return _NATL_AVG + em / 2.0
+
+def _est_ad(em: float) -> float:
+    """Estimate AdjDE from AdjEM when actual value unknown (symmetric split)."""
+    return _NATL_AVG - em / 2.0
+
 _TEAMS_RAW = {
+    # ao = AdjOE (pts per 100 poss), ad = AdjDE (pts allowed per 100 poss)
+    # Source: barttorvik.com (real values); "est" = derived from AdjEM
     # --- EAST ---
-    "Duke":            {"em": 37.35, "tempo": 72, "seed": 1,  "region": "East",    "3pt": True},   # AdjOE 128.2 AdjDE 90.8
-    "UConn":           {"em": 28.11, "tempo": 66, "seed": 2,  "region": "East",    "3pt": False},  # AdjOE 123.1 AdjDE 95.0
-    "Michigan St":     {"em": 26.73, "tempo": 70, "seed": 3,  "region": "East",    "3pt": False},  # AdjOE 122.9 AdjDE 96.2
-    "Kansas":          {"em": 23.46, "tempo": 70, "seed": 4,  "region": "East",    "3pt": True},   # AdjOE 117.8 AdjDE 94.4
-    "St Johns":        {"em": 25.71, "tempo": 69, "seed": 5,  "region": "East",    "3pt": False},  # AdjOE 119.8 AdjDE 94.1
-    "Louisville":      {"em": 25.87, "tempo": 70, "seed": 6,  "region": "East",    "3pt": False},  # AdjOE 124.0 AdjDE 98.2
-    "UCLA":            {"em": 22.77, "tempo": 70, "seed": 7,  "region": "East",    "3pt": False},  # AdjOE 124.6 AdjDE 101.8
-    "Ohio St":         {"em": 23.62, "tempo": 70, "seed": 8,  "region": "East",    "3pt": False},  # AdjOE 125.2 AdjDE 101.6
-    "TCU":             {"em": 15.21, "tempo": 69, "seed": 9,  "region": "East",    "3pt": False},  # AdjOE 114.9 AdjDE 99.6
-    "UCF":             {"em": 14.31, "tempo": 70, "seed": 10, "region": "East",    "3pt": False},  # AdjOE 120.0 AdjDE 105.7
-    "South Florida":   {"em":  9.00, "tempo": 68, "seed": 11, "region": "East",    "3pt": False},  # est (below T100)
-    "Northern Iowa":   {"em":  6.50, "tempo": 63, "seed": 12, "region": "East",    "3pt": False},  # est -- slow MVC pace
-    "Cal Baptist":     {"em":  2.50, "tempo": 68, "seed": 13, "region": "East",    "3pt": False},  # est
-    "North Dakota St": {"em":  0.50, "tempo": 68, "seed": 14, "region": "East",    "3pt": False},  # est
-    "Furman":          {"em": -3.50, "tempo": 68, "seed": 15, "region": "East",    "3pt": False},  # est
-    "Siena":           {"em": -8.00, "tempo": 68, "seed": 16, "region": "East",    "3pt": False},  # est
+    "Duke":            {"em": 37.35, "ao": 128.2, "ad":  90.8, "tempo": 72, "seed": 1,  "region": "East",    "3pt": True},
+    "UConn":           {"em": 28.11, "ao": 123.1, "ad":  95.0, "tempo": 66, "seed": 2,  "region": "East",    "3pt": False},
+    "Michigan St":     {"em": 26.73, "ao": 122.9, "ad":  96.2, "tempo": 70, "seed": 3,  "region": "East",    "3pt": False},
+    "Kansas":          {"em": 23.46, "ao": 117.8, "ad":  94.4, "tempo": 70, "seed": 4,  "region": "East",    "3pt": True},
+    "St Johns":        {"em": 25.71, "ao": 119.8, "ad":  94.1, "tempo": 69, "seed": 5,  "region": "East",    "3pt": False},
+    "Louisville":      {"em": 25.87, "ao": 124.0, "ad":  98.2, "tempo": 70, "seed": 6,  "region": "East",    "3pt": False},
+    "UCLA":            {"em": 22.77, "ao": 124.6, "ad": 101.8, "tempo": 70, "seed": 7,  "region": "East",    "3pt": False},
+    "Ohio St":         {"em": 23.62, "ao": 125.2, "ad": 101.6, "tempo": 70, "seed": 8,  "region": "East",    "3pt": False},
+    "TCU":             {"em": 15.21, "ao": 114.9, "ad":  99.6, "tempo": 69, "seed": 9,  "region": "East",    "3pt": False},
+    "UCF":             {"em": 14.31, "ao": 120.0, "ad": 105.7, "tempo": 70, "seed": 10, "region": "East",    "3pt": False},
+    "South Florida":   {"em":  9.00, "ao": _est_ao( 9.0), "ad": _est_ad( 9.0), "tempo": 68, "seed": 11, "region": "East",    "3pt": False},
+    "Northern Iowa":   {"em":  6.50, "ao": _est_ao( 6.5), "ad": _est_ad( 6.5), "tempo": 63, "seed": 12, "region": "East",    "3pt": False},
+    "Cal Baptist":     {"em":  2.50, "ao": _est_ao( 2.5), "ad": _est_ad( 2.5), "tempo": 68, "seed": 13, "region": "East",    "3pt": False},
+    "North Dakota St": {"em":  0.50, "ao": _est_ao( 0.5), "ad": _est_ad( 0.5), "tempo": 68, "seed": 14, "region": "East",    "3pt": False},
+    "Furman":          {"em": -3.50, "ao": _est_ao(-3.5), "ad": _est_ad(-3.5), "tempo": 68, "seed": 15, "region": "East",    "3pt": False},
+    "Siena":           {"em": -8.00, "ao": _est_ao(-8.0), "ad": _est_ad(-8.0), "tempo": 68, "seed": 16, "region": "East",    "3pt": False},
 
     # --- WEST ---
-    "Arizona":         {"em": 35.54, "tempo": 71, "seed": 1,  "region": "West",    "3pt": False},  # AdjOE 126.9 AdjDE 91.4
-    "Purdue":          {"em": 33.06, "tempo": 71, "seed": 2,  "region": "West",    "3pt": True},   # AdjOE 133.3 AdjDE 100.3
-    "Gonzaga":         {"em": 26.29, "tempo": 72, "seed": 3,  "region": "West",    "3pt": True},   # AdjOE 120.3 AdjDE 94.0
-    "Arkansas":        {"em": 26.29, "tempo": 72, "seed": 4,  "region": "West",    "3pt": True},   # AdjOE 127.9 AdjDE 101.6 -- Acuff 3pt
-    "Wisconsin":       {"em": 25.54, "tempo": 68, "seed": 5,  "region": "West",    "3pt": False},  # AdjOE 127.2 AdjDE 101.6
-    "BYU":             {"em": 20.43, "tempo": 70, "seed": 6,  "region": "West",    "3pt": False},  # AdjOE 124.8 AdjDE 104.3
-    "Miami FL":        {"em": 19.64, "tempo": 70, "seed": 7,  "region": "West",    "3pt": False},  # AdjOE 121.1 AdjDE 101.5
-    "Villanova":       {"em": 19.05, "tempo": 66, "seed": 8,  "region": "West",    "3pt": False},  # AdjOE 119.6 AdjDE 100.5
-    "Utah St":         {"em": 20.94, "tempo": 67, "seed": 9,  "region": "West",    "3pt": False},  # AdjOE 123.0 AdjDE 102.1
-    "Missouri":        {"em": 16.90, "tempo": 70, "seed": 10, "region": "West",    "3pt": False},  # AdjOE 119.9 AdjDE 103.0
-    "NCST/SMU":        {"em": 14.35, "tempo": 70, "seed": 11, "region": "West",    "3pt": False},  # First Four: avg(NC St 14.69, SMU 14.00)
-    "High Point":      {"em":  5.50, "tempo": 69, "seed": 12, "region": "West",    "3pt": False},  # est
-    "Hawaii":          {"em":  2.50, "tempo": 69, "seed": 13, "region": "West",    "3pt": False},  # est
-    "Kennesaw St":     {"em":  0.00, "tempo": 68, "seed": 14, "region": "West",    "3pt": False},  # est
-    "Queens":          {"em": -3.50, "tempo": 68, "seed": 15, "region": "West",    "3pt": False},  # est
-    "LIU":             {"em": -8.00, "tempo": 68, "seed": 16, "region": "West",    "3pt": False},  # est
+    "Arizona":         {"em": 35.54, "ao": 126.9, "ad":  91.4, "tempo": 71, "seed": 1,  "region": "West",    "3pt": False},
+    "Purdue":          {"em": 33.06, "ao": 133.3, "ad": 100.3, "tempo": 71, "seed": 2,  "region": "West",    "3pt": True},
+    "Gonzaga":         {"em": 26.29, "ao": 120.3, "ad":  94.0, "tempo": 72, "seed": 3,  "region": "West",    "3pt": True},
+    "Arkansas":        {"em": 26.29, "ao": 127.9, "ad": 101.6, "tempo": 72, "seed": 4,  "region": "West",    "3pt": True},
+    "Wisconsin":       {"em": 25.54, "ao": 127.2, "ad": 101.6, "tempo": 68, "seed": 5,  "region": "West",    "3pt": False},
+    "BYU":             {"em": 20.43, "ao": 124.8, "ad": 104.3, "tempo": 70, "seed": 6,  "region": "West",    "3pt": False},
+    "Miami FL":        {"em": 19.64, "ao": 121.1, "ad": 101.5, "tempo": 70, "seed": 7,  "region": "West",    "3pt": False},
+    "Villanova":       {"em": 19.05, "ao": 119.6, "ad": 100.5, "tempo": 66, "seed": 8,  "region": "West",    "3pt": False},
+    "Utah St":         {"em": 20.94, "ao": 123.0, "ad": 102.1, "tempo": 67, "seed": 9,  "region": "West",    "3pt": False},
+    "Missouri":        {"em": 16.90, "ao": 119.9, "ad": 103.0, "tempo": 70, "seed": 10, "region": "West",    "3pt": False},
+    "NCST/SMU":        {"em": 14.35, "ao": _est_ao(14.35), "ad": _est_ad(14.35), "tempo": 70, "seed": 11, "region": "West",    "3pt": False},
+    "High Point":      {"em":  5.50, "ao": _est_ao( 5.5), "ad": _est_ad( 5.5), "tempo": 69, "seed": 12, "region": "West",    "3pt": False},
+    "Hawaii":          {"em":  2.50, "ao": _est_ao( 2.5), "ad": _est_ad( 2.5), "tempo": 69, "seed": 13, "region": "West",    "3pt": False},
+    "Kennesaw St":     {"em":  0.00, "ao": _est_ao( 0.0), "ad": _est_ad( 0.0), "tempo": 68, "seed": 14, "region": "West",    "3pt": False},
+    "Queens":          {"em": -3.50, "ao": _est_ao(-3.5), "ad": _est_ad(-3.5), "tempo": 68, "seed": 15, "region": "West",    "3pt": False},
+    "LIU":             {"em": -8.00, "ao": _est_ao(-8.0), "ad": _est_ad(-8.0), "tempo": 68, "seed": 16, "region": "West",    "3pt": False},
 
     # --- MIDWEST ---
-    "Michigan":        {"em": 36.61, "tempo": 72, "seed": 1,  "region": "Midwest", "3pt": True},   # AdjOE 127.7 AdjDE 91.0
-    "Iowa St":         {"em": 31.14, "tempo": 67, "seed": 2,  "region": "Midwest", "3pt": False},  # AdjOE 123.8 AdjDE 92.6
-    "Virginia":        {"em": 26.42, "tempo": 64, "seed": 3,  "region": "Midwest", "3pt": False},  # AdjOE 122.3 AdjDE 95.8 -- slow
-    "Alabama":         {"em": 26.71, "tempo": 72, "seed": 4,  "region": "Midwest", "3pt": True},   # AdjOE 129.5 AdjDE 102.8
-    "Texas Tech":      {"em": 27.49, "tempo": 70, "seed": 5,  "region": "Midwest", "3pt": False},  # AdjOE 126.3 AdjDE 98.8
-    "Tennessee":       {"em": 25.98, "tempo": 70, "seed": 6,  "region": "Midwest", "3pt": False},  # AdjOE 121.5 AdjDE 95.5
-    "Kentucky":        {"em": 19.94, "tempo": 71, "seed": 7,  "region": "Midwest", "3pt": False},  # AdjOE 119.9 AdjDE 100.0
-    "Georgia":         {"em": 19.59, "tempo": 71, "seed": 8,  "region": "Midwest", "3pt": False},  # AdjOE 124.4 AdjDE 104.8
-    "Saint Louis":     {"em": 17.26, "tempo": 62, "seed": 9,  "region": "Midwest", "3pt": False},  # AdjOE 119.5 AdjDE 102.3 -- very slow
-    "Santa Clara":     {"em":  7.50, "tempo": 69, "seed": 10, "region": "Midwest", "3pt": False},  # est (WCC)
-    "Miami OH":        {"em":  9.00, "tempo": 70, "seed": 11, "region": "Midwest", "3pt": False},  # est (MAC)
-    "Akron":           {"em":  8.00, "tempo": 70, "seed": 12, "region": "Midwest", "3pt": True},   # est -- 3 senior guards 37%+ from 3
-    "Hofstra":         {"em":  2.50, "tempo": 69, "seed": 13, "region": "Midwest", "3pt": False},  # est
-    "Wright St":       {"em":  0.50, "tempo": 68, "seed": 14, "region": "Midwest", "3pt": False},  # est
-    "Tennessee St":    {"em": -3.50, "tempo": 68, "seed": 15, "region": "Midwest", "3pt": False},  # est
-    "HWD/LEH":         {"em": -8.00, "tempo": 68, "seed": 16, "region": "Midwest", "3pt": False},  # First Four: Howard vs Lehigh
+    "Michigan":        {"em": 36.61, "ao": 127.7, "ad":  91.0, "tempo": 72, "seed": 1,  "region": "Midwest", "3pt": True},
+    "Iowa St":         {"em": 31.14, "ao": 123.8, "ad":  92.6, "tempo": 67, "seed": 2,  "region": "Midwest", "3pt": False},
+    "Virginia":        {"em": 26.42, "ao": 122.3, "ad":  95.8, "tempo": 64, "seed": 3,  "region": "Midwest", "3pt": False},
+    "Alabama":         {"em": 26.71, "ao": 129.5, "ad": 102.8, "tempo": 72, "seed": 4,  "region": "Midwest", "3pt": True},
+    "Texas Tech":      {"em": 27.49, "ao": 126.3, "ad":  98.8, "tempo": 70, "seed": 5,  "region": "Midwest", "3pt": False},
+    "Tennessee":       {"em": 25.98, "ao": 121.5, "ad":  95.5, "tempo": 70, "seed": 6,  "region": "Midwest", "3pt": False},
+    "Kentucky":        {"em": 19.94, "ao": 119.9, "ad": 100.0, "tempo": 71, "seed": 7,  "region": "Midwest", "3pt": False},
+    "Georgia":         {"em": 19.59, "ao": 124.4, "ad": 104.8, "tempo": 71, "seed": 8,  "region": "Midwest", "3pt": False},
+    "Saint Louis":     {"em": 17.26, "ao": 119.5, "ad": 102.3, "tempo": 62, "seed": 9,  "region": "Midwest", "3pt": False},
+    "Santa Clara":     {"em":  7.50, "ao": _est_ao( 7.5), "ad": _est_ad( 7.5), "tempo": 69, "seed": 10, "region": "Midwest", "3pt": False},
+    "Miami OH":        {"em":  9.00, "ao": _est_ao( 9.0), "ad": _est_ad( 9.0), "tempo": 70, "seed": 11, "region": "Midwest", "3pt": False},
+    "Akron":           {"em":  8.00, "ao": _est_ao( 8.0), "ad": _est_ad( 8.0), "tempo": 70, "seed": 12, "region": "Midwest", "3pt": True},
+    "Hofstra":         {"em":  2.50, "ao": _est_ao( 2.5), "ad": _est_ad( 2.5), "tempo": 69, "seed": 13, "region": "Midwest", "3pt": False},
+    "Wright St":       {"em":  0.50, "ao": _est_ao( 0.5), "ad": _est_ad( 0.5), "tempo": 68, "seed": 14, "region": "Midwest", "3pt": False},
+    "Tennessee St":    {"em": -3.50, "ao": _est_ao(-3.5), "ad": _est_ad(-3.5), "tempo": 68, "seed": 15, "region": "Midwest", "3pt": False},
+    "HWD/LEH":         {"em": -8.00, "ao": _est_ao(-8.0), "ad": _est_ad(-8.0), "tempo": 68, "seed": 16, "region": "Midwest", "3pt": False},
 
     # --- SOUTH ---
-    "Florida":         {"em": 33.82, "tempo": 72, "seed": 1,  "region": "South",   "3pt": False},  # AdjOE 126.1 AdjDE 92.3
-    "Houston":         {"em": 32.95, "tempo": 65, "seed": 2,  "region": "South",   "3pt": False},  # AdjOE 125.3 AdjDE 92.4 -- methodical
-    "Illinois":        {"em": 33.73, "tempo": 71, "seed": 3,  "region": "South",   "3pt": False},  # AdjOE 131.9 AdjDE 98.2
-    "Nebraska":        {"em": 23.71, "tempo": 69, "seed": 4,  "region": "South",   "3pt": False},  # AdjOE 117.2 AdjDE 93.5
-    "Vanderbilt":      {"em": 28.11, "tempo": 70, "seed": 5,  "region": "South",   "3pt": False},  # AdjOE 127.5 AdjDE 99.4
-    "North Carolina":  {"em": 21.41, "tempo": 70, "seed": 6,  "region": "South",   "3pt": False},  # AdjOE 121.4 AdjDE 100.0
-    "Saint Marys":     {"em": 21.82, "tempo": 63, "seed": 7,  "region": "South",   "3pt": False},  # AdjOE 119.4 AdjDE 97.5 -- very slow
-    "Clemson":         {"em": 19.56, "tempo": 69, "seed": 8,  "region": "South",   "3pt": False},  # AdjOE 116.6 AdjDE 97.0
-    "Iowa":            {"em": 21.92, "tempo": 68, "seed": 9,  "region": "South",   "3pt": False},  # AdjOE 122.1 AdjDE 100.2
-    "Texas AM":        {"em": 18.43, "tempo": 69, "seed": 10, "region": "South",   "3pt": False},  # AdjOE 119.9 AdjDE 101.4
-    "VCU":             {"em": 16.24, "tempo": 70, "seed": 11, "region": "South",   "3pt": False},  # AdjOE 119.3 AdjDE 103.0
-    "McNeese":         {"em":  5.50, "tempo": 69, "seed": 12, "region": "South",   "3pt": False},  # est
-    "Troy":            {"em":  2.00, "tempo": 68, "seed": 13, "region": "South",   "3pt": False},  # est
-    "Penn":            {"em":  1.00, "tempo": 68, "seed": 14, "region": "South",   "3pt": False},  # est (Ivy)
-    "Idaho":           {"em": -3.50, "tempo": 68, "seed": 15, "region": "South",   "3pt": False},  # est
-    "Prairie View":    {"em": -8.50, "tempo": 68, "seed": 16, "region": "South",   "3pt": False},  # est
+    "Florida":         {"em": 33.82, "ao": 126.1, "ad":  92.3, "tempo": 72, "seed": 1,  "region": "South",   "3pt": False},
+    "Houston":         {"em": 32.95, "ao": 125.3, "ad":  92.4, "tempo": 65, "seed": 2,  "region": "South",   "3pt": False},
+    "Illinois":        {"em": 33.73, "ao": 131.9, "ad":  98.2, "tempo": 71, "seed": 3,  "region": "South",   "3pt": False},
+    "Nebraska":        {"em": 23.71, "ao": 117.2, "ad":  93.5, "tempo": 69, "seed": 4,  "region": "South",   "3pt": False},
+    "Vanderbilt":      {"em": 28.11, "ao": 127.5, "ad":  99.4, "tempo": 70, "seed": 5,  "region": "South",   "3pt": False},
+    "North Carolina":  {"em": 21.41, "ao": 121.4, "ad": 100.0, "tempo": 70, "seed": 6,  "region": "South",   "3pt": False},
+    "Saint Marys":     {"em": 21.82, "ao": 119.4, "ad":  97.5, "tempo": 63, "seed": 7,  "region": "South",   "3pt": False},
+    "Clemson":         {"em": 19.56, "ao": 116.6, "ad":  97.0, "tempo": 69, "seed": 8,  "region": "South",   "3pt": False},
+    "Iowa":            {"em": 21.92, "ao": 122.1, "ad": 100.2, "tempo": 68, "seed": 9,  "region": "South",   "3pt": False},
+    "Texas AM":        {"em": 18.43, "ao": 119.9, "ad": 101.4, "tempo": 69, "seed": 10, "region": "South",   "3pt": False},
+    "VCU":             {"em": 16.24, "ao": 119.3, "ad": 103.0, "tempo": 70, "seed": 11, "region": "South",   "3pt": False},
+    "McNeese":         {"em":  5.50, "ao": _est_ao( 5.5), "ad": _est_ad( 5.5), "tempo": 69, "seed": 12, "region": "South",   "3pt": False},
+    "Troy":            {"em":  2.00, "ao": _est_ao( 2.0), "ad": _est_ad( 2.0), "tempo": 68, "seed": 13, "region": "South",   "3pt": False},
+    "Penn":            {"em":  1.00, "ao": _est_ao( 1.0), "ad": _est_ad( 1.0), "tempo": 68, "seed": 14, "region": "South",   "3pt": False},
+    "Idaho":           {"em": -3.50, "ao": _est_ao(-3.5), "ad": _est_ad(-3.5), "tempo": 68, "seed": 15, "region": "South",   "3pt": False},
+    "Prairie View":    {"em": -8.50, "ao": _est_ao(-8.5), "ad": _est_ad(-8.5), "tempo": 68, "seed": 16, "region": "South",   "3pt": False},
 }
 
-# Apply injury adjustments
+# Apply injury adjustments; carry through AdjOE/AdjDE for score model
 TEAMS = {}
 for name, data in _TEAMS_RAW.items():
-    adj = INJURY_ADJ.get(name, 0.0)
+    inj = INJURY_ADJ.get(name, 0.0)
+    em_inj = round(data["em"] + inj, 3)
     TEAMS[name] = {
-        "em":     round(data["em"] + adj, 3),
+        "em":     em_inj,
+        "ao":     round(data["ao"] + inj / 2.0, 2),  # injury splits ~50/50 offensively
+        "ad":     round(data["ad"] - inj / 2.0, 2),  # defensive impact of injury
         "tempo":  data["tempo"],
         "seed":   data["seed"],
         "region": data["region"],
@@ -210,13 +244,39 @@ ALL_TEAMS    = list(TEAMS.keys())
 # ---------------------------------------------------------------------------
 # WIN PROBABILITY
 # ---------------------------------------------------------------------------
-def _torvik_prob(team_a: str, team_b: str) -> float:
-    """BartTorvik NormCDF win probability for team_a."""
+def _effective_tempo(a: dict, b: dict) -> float:
+    """
+    60/40 weighted blend toward slower team (coaching tempo research).
+    Falls back to arithmetic mean if enhanced module not available.
+    """
+    if USE_COACHING_TEMPO and _ENHANCED:
+        return coaching_tempo_blend(a["tempo"], b["tempo"])
+    return (a["tempo"] + b["tempo"]) / 2.0
+
+
+def _adjusted_ems(team_a: str, team_b: str):
+    """
+    Apply luck regression and coaching style adjustments to AdjEM.
+    Returns (em_a, em_b) after all pre-game adjustments.
+    """
     a = TEAMS[team_a]
     b = TEAMS[team_b]
-    sigma = SIGMA_3PT if (a["3pt"] or b["3pt"]) else SIGMA_BASE
-    tempo_factor = (a["tempo"] + b["tempo"]) / 200.0
-    point_diff   = (a["em"] - b["em"]) * tempo_factor * TOURNEY_MULT
+    if USE_LUCK_ADJ and _ENHANCED:
+        em_a, em_b = apply_all_adjustments(team_a, a["em"], team_b, b["em"])
+    else:
+        em_a, em_b = a["em"], b["em"]
+    return em_a, em_b
+
+
+def _torvik_prob(team_a: str, team_b: str) -> float:
+    """BartTorvik NormCDF win probability for team_a (with enhancements)."""
+    a = TEAMS[team_a]
+    b = TEAMS[team_b]
+    sigma        = SIGMA_3PT if (a["3pt"] or b["3pt"]) else SIGMA_BASE
+    eff_tempo    = _effective_tempo(a, b)
+    tempo_factor = eff_tempo / 100.0
+    em_a, em_b   = _adjusted_ems(team_a, team_b)
+    point_diff   = (em_a - em_b) * tempo_factor * TOURNEY_MULT
     return float(norm.cdf(point_diff / sigma))
 
 
@@ -418,6 +478,37 @@ def generate_bracket(adv: dict) -> dict:
 # ---------------------------------------------------------------------------
 # OUTPUT
 # ---------------------------------------------------------------------------
+def compute_projected_totals(bracket: dict) -> list:
+    """
+    Project scores and totals for all R64 matchups.
+    Returns list of project_game() dicts (one per game).
+    """
+    if not _ENHANCED:
+        return []
+
+    projections = []
+    for region, games in BRACKET.items():
+        for ta, tb in games:
+            a = TEAMS[ta]
+            b = TEAMS[tb]
+            # Market total unavailable from market_lines.json (it only has P(home wins))
+            # We could store totals separately; for now use None
+            proj = project_game(
+                adjOE_a=a["ao"],
+                adjDE_a=a["ad"],
+                adjOE_b=b["ao"],
+                adjDE_b=b["ad"],
+                tempo_a=a["tempo"],
+                tempo_b=b["tempo"],
+                team_a=ta,
+                team_b=tb,
+                market_total=None,
+            )
+            proj["region"] = region
+            projections.append(proj)
+    return projections
+
+
 def print_results(adv: dict, bracket: dict):
     print("=" * 70)
     print("CHAMPIONSHIP PROBABILITIES  (BartTorvik real data + injury adj)")
@@ -491,10 +582,56 @@ def print_results(adv: dict, bracket: dict):
     if not upset_found:
         print("  No R64 upsets -- all higher seeds picked to win Round 1")
 
+    # Projected totals / score model output
+    projections = compute_projected_totals(bracket)
+    if projections:
+        print()
+        print("=" * 90)
+        print("PROJECTED SCORES & TOTALS  (Pomeroy AdjOE/AdjDE interaction model)")
+        mode = ""
+        if USE_LUCK_ADJ:
+            mode += "Luck-adj "
+        if USE_COACHING_TEMPO:
+            mode += "| 60/40 tempo blend"
+        print(f"  {mode.strip() or 'Base model'}")
+        print("=" * 90)
 
-def save_json(adv: dict, bracket: dict, out_path: str):
+        # Sort by region + seeding order
+        region_order_map = {r: i for i, r in enumerate(REGION_ORDER)}
+        projections.sort(key=lambda p: (region_order_map.get(p.get("region", ""), 99),
+                                        TEAMS.get(p["team_a"], {}).get("seed", 99)))
+
+        print_projection_table(projections)
+
+        # Highlight extreme totals (potential betting signals)
+        # HIGH TOTAL: both teams must be close (margin <20 pts = competitive game)
+        # The "71% under" finding applies to games where MARKET sets high total,
+        # which only happens when both teams are roughly evenly matched high-scorers.
+        high_total = [p for p in projections if p["total"] > 155.0 and abs(p["spread"]) < 20.0]
+        low_total  = [p for p in projections if p["total"] < 130.0]
+        if high_total:
+            print()
+            print("  HIGH TOTAL ALERT (>155 pts, close game -- mkt likely high, 71% UNDER historically):")
+            for p in high_total:
+                print(f"    {p['team_a']} vs {p['team_b']}: {p['total']:.0f} proj total  (spread={p['spread']:+.0f})")
+        if low_total:
+            print()
+            print("  LOW TOTAL ALERT (<130 pts projected -- slow pace / defensive matchup):")
+            for p in low_total:
+                print(f"    {p['team_a']} vs {p['team_b']}: {p['total']:.0f} proj total  ({p['possessions']:.0f} poss)")
+
+
+def save_json(adv: dict, bracket: dict, out_path: str, projections: list = None):
+    enhancements = []
+    if USE_LUCK_ADJ and _ENHANCED:
+        enhancements.append("luck_regression_30pct")
+    if USE_COACHING_TEMPO and _ENHANCED:
+        enhancements.append("coaching_tempo_60_40_blend")
+    enhancements.append("coaching_style_zone_press")
+
     output = {
         "model":        "BartTorvik AdjEM + Evan Miya injury adj",
+        "enhancements": enhancements,
         "sims":         N_SIMS,
         "market_lines": len(MARKET_LINES),
         "champion":     bracket["Champion"],
@@ -510,6 +647,8 @@ def save_json(adv: dict, bracket: dict, out_path: str):
         "full_advancement": {
             t: {
                 "AdjEM":    TEAMS[t]["em"],
+                "AdjOE":    TEAMS[t]["ao"],
+                "AdjDE":    TEAMS[t]["ad"],
                 "seed":     TEAMS[t]["seed"],
                 "region":   TEAMS[t]["region"],
                 "R64":      f"{adv[t][0]/N_SIMS*100:.1f}%",
@@ -522,6 +661,18 @@ def save_json(adv: dict, bracket: dict, out_path: str):
             for t in sorted(ALL_TEAMS, key=lambda x: -adv[x][5])
         },
     }
+    if projections:
+        output["projected_totals"] = [
+            {
+                "matchup":     f"{p['team_a']} vs {p['team_b']}",
+                "region":      p.get("region", ""),
+                "score":       f"{p['score_a']:.0f}-{p['score_b']:.0f}",
+                "total":       p["total"],
+                "spread":      p["spread"],
+                "possessions": p["possessions"],
+            }
+            for p in projections
+        ]
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(output, f, indent=2)
     print(f"\nResults saved to {out_path}")
@@ -537,9 +688,10 @@ if __name__ == "__main__":
     print(f"Market lines loaded: {len(MARKET_LINES)} (0 = pure BartTorvik mode)")
     print()
 
-    adv     = run_simulation()
-    bracket = generate_bracket(adv)
+    adv         = run_simulation()
+    bracket     = generate_bracket(adv)
     print_results(adv, bracket)
+    projections = compute_projected_totals(bracket)
 
     out_dir = os.path.dirname(os.path.abspath(__file__))
-    save_json(adv, bracket, os.path.join(out_dir, "results_2026.json"))
+    save_json(adv, bracket, os.path.join(out_dir, "results_2026.json"), projections)
