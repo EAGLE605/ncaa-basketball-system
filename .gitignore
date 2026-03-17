@@ -1,0 +1,14 @@
+.env
+*.pyc
+__pycache__/
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+*.parquet
+data/odds/*.json
+data/games/*.csv
+data/torvik/*.json
+.pytest_cache/
+*.log
