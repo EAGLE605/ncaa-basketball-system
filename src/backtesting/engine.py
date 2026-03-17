@@ -90,7 +90,8 @@ class YearResult:
     brier_by_round: Dict[str, float]         # per-round Brier
     upsets_predicted: int                    # model correctly predicted an upset
     upsets_missed: int                       # lower seed won, model backed chalk
-    kelly_bets: List[GamePrediction] = field(default_factory=list)
+    all_games: List[GamePrediction] = field(default_factory=list)   # ALL games (for calibration pool)
+    kelly_bets: List[GamePrediction] = field(default_factory=list)  # games with bettable edge
     roi_pct: float = 0.0
     sharpe: float = 0.0
     max_drawdown_pct: float = 0.0
@@ -167,6 +168,7 @@ class BacktestEngine:
             brier_by_round=brier_by_round,
             upsets_predicted=upsets_predicted,
             upsets_missed=upsets_missed,
+            all_games=games,
             kelly_bets=kelly_bets,
             roi_pct=roi,
             sharpe=sharpe,
@@ -255,13 +257,15 @@ class BacktestEngine:
             bet_games.append(g)
 
             stake = bankroll * f
+            bankroll_before = bankroll
             dec = american_to_decimal(g.ml_a)
             if g.outcome == 1:
                 bankroll += stake * (dec - 1.0)
             else:
                 bankroll -= stake
 
-            ret = (bankroll - peak) / peak
+            # Per-bet return (correct for Sharpe calculation)
+            ret = (bankroll - bankroll_before) / bankroll_before
             returns.append(ret)
             if bankroll > peak:
                 peak = bankroll
@@ -432,8 +436,9 @@ class TournamentBacktestOrchestrator:
             try:
                 result = self.run_year(year, prior_games, mock=mock)
                 year_results.append(result)
-                # Add this year's games to the cumulative calibration pool
-                prior_games.extend(result.kelly_bets)
+                # Add ALL games (not just kelly_bets) to the calibration pool.
+                # Using only kelly_bets would bias calibration to selection-positive samples.
+                prior_games.extend(result.all_games)
                 logger.info(
                     f"  {year}: accuracy={result.accuracy_by_round.get('overall', 0):.1%}, "
                     f"Brier={result.brier_score:.4f}, ROI={result.roi_pct:+.1f}%"
@@ -464,9 +469,15 @@ class TournamentBacktestOrchestrator:
             if vals:
                 ensemble_acc[rnd] = round(float(np.mean(vals)), 4)
 
-        # Calibration lift: compare raw vs calibrated Brier
-        raw_briers  = [y.brier_score for y in years]
-        avg_brier   = float(np.mean(raw_briers)) if raw_briers else 0.0
+        # Calibration lift: Brier improvement from raw -> calibrated probabilities.
+        # Only meaningful for games that have cal_prob_a set (calibration was not skipped).
+        cal_games = [g for y in years for g in y.all_games if g.cal_prob_a is not None]
+        if cal_games:
+            raw_brier = float(np.mean([(g.pred_prob_a - g.outcome) ** 2 for g in cal_games]))
+            cal_brier = float(np.mean([(g.cal_prob_a  - g.outcome) ** 2 for g in cal_games]))
+            calibration_lift = round(raw_brier - cal_brier, 4)  # positive = calibration helped
+        else:
+            calibration_lift = 0.0
 
         # CLV summary
         clv_vals = [y.clv_mean for y in years if y.clv_mean is not None]
@@ -474,16 +485,27 @@ class TournamentBacktestOrchestrator:
 
         total_roi = sum(y.roi_pct for y in years)
 
-        all_returns = []
+        # Aggregate Sharpe: per-bet returns across all Kelly bet games
+        # kelly_bets stores actual bet games; we need per-bet P&L returns.
+        # Approximate from stake and outcome (exact return series per game).
+        all_per_bet_returns = []
         for y in years:
-            all_returns.extend([g.kelly_fraction_a for g in y.kelly_bets])
-        total_sharpe = self.engine._sharpe(all_returns)
+            for g in y.kelly_bets:
+                if g.ml_a is None or g.stake <= 0:
+                    continue
+                from src.betting.kelly import american_to_decimal
+                dec = american_to_decimal(g.ml_a)
+                if g.outcome == 1:
+                    all_per_bet_returns.append(g.stake * (dec - 1.0))
+                else:
+                    all_per_bet_returns.append(-g.stake)
+        total_sharpe = self.engine._sharpe(all_per_bet_returns)
 
         return WalkForwardResult(
             years=years,
             year_errors=errors,
             ensemble_accuracy=ensemble_acc,
-            calibration_lift=0.0,  # computed after both raw+cal runs
+            calibration_lift=calibration_lift,
             clv_summary=clv_summary,
             total_roi_pct=round(total_roi, 3),
             total_sharpe=total_sharpe,
