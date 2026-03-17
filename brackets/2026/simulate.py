@@ -36,6 +36,17 @@ MARKET_LINES: dict = {
     # ("Duke", "Siena"): 0.985,
 }
 
+# Auto-load from brackets/2026/market_lines.json if present.
+# Generate it with: python scripts/pull_tournament_lines.py
+import pathlib as _pathlib
+_ml_path = _pathlib.Path(__file__).parent / "market_lines.json"
+if _ml_path.exists():
+    with open(_ml_path) as _f:
+        import json as _json
+        _ml_data = _json.load(_f)
+    MARKET_LINES = {tuple(k.split(" vs ")): v for k, v in _ml_data.items()}
+    print(f"[simulate] Auto-loaded {len(MARKET_LINES)} market lines from market_lines.json")
+
 # ---------------------------------------------------------------------------
 # INJURY ADJUSTMENTS
 # Only injuries NOT already reflected in BartTorvik ratings (post-data-cutoff)
@@ -531,4 +542,4 @@ if __name__ == "__main__":
     print_results(adv, bracket)
 
     out_dir = os.path.dirname(os.path.abspath(__file__))
-    save_json(adv, bracket, os.path.join(out_dir, "results_final.json"))
+    save_json(adv, bracket, os.path.join(out_dir, "results_2026.json"))

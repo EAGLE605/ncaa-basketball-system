@@ -1,78 +1,108 @@
 canonical,torvik_name,espn_name,alt_names
-Duke,Duke,Duke Blue Devils,Duke
-Michigan,Michigan,Michigan Wolverines,Michigan
-Arizona,Arizona,Arizona Wildcats,Arizona
-Florida,Florida,Florida Gators,Florida
-Illinois,Illinois,Illinois Fighting Illini,Illinois
-Purdue,Purdue,Purdue Boilermakers,Purdue
-Houston,Houston,Houston Cougars,Houston
-Iowa St,Iowa St,Iowa State Cyclones,Iowa State|Iowa St.
-Tennessee,Tennessee,Tennessee Volunteers,Tennessee
-Auburn,Auburn,Auburn Tigers,Auburn
+Akron,Akron,Akron Zips,Akron
 Alabama,Alabama,Alabama Crimson Tide,Alabama
-Texas A&M,Texas A&M,Texas A&M Aggies,TAMU
-Michigan St,Michigan St,Michigan State Spartans,Michigan State
-Wisconsin,Wisconsin,Wisconsin Badgers,Wisconsin
-Kentucky,Kentucky,Kentucky Wildcats,Kentucky
-Kansas,Kansas,Kansas Jayhawks,Kansas
-Gonzaga,Gonzaga,Gonzaga Bulldogs,Gonzaga
-UConn,UConn,Connecticut Huskies,Connecticut|UCONN
-St Johns,St Johns,St. John's (NY),St. John's|Saint John's
-Texas Tech,Texas Tech,Texas Tech Red Raiders,TTU
-Clemson,Clemson,Clemson Tigers,Clemson
-Creighton,Creighton,Creighton Bluejays,Creighton
-Villanova,Villanova,Villanova Wildcats,Villanova
-North Carolina,North Carolina,North Carolina Tar Heels,UNC|Carolina
-Duke,Duke,Duke Blue Devils,
-Louisville,Louisville,Louisville Cardinals,Louisville
-Marquette,Marquette,Marquette Golden Eagles,Marquette
-Memphis,Memphis,Memphis Tigers,Memphis
-Maryland,Maryland,Maryland Terrapins,Maryland
-Missouri,Missouri,Missouri Tigers,Mizzou
-Nebraska,Nebraska,Nebraska Cornhuskers,Nebraska
-BYU,BYU,BYU Cougars,Brigham Young
-Colorado St,Colorado St,Colorado State Rams,Colorado State
-UC San Diego,UC San Diego,UC San Diego Tritons,UCSD
-Samford,Samford,Samford Bulldogs,Samford
+Alabama St,Alabama St,Alabama State Hornets,Alabama State
+American,American,American Eagles,American University
+Arizona,Arizona,Arizona Wildcats,Arizona
 Arkansas,Arkansas,Arkansas Razorbacks,Arkansas
-Miami FL,Miami FL,Miami (FL) Hurricanes,Miami FL|Miami (FL)|Miami
-Ohio St,Ohio St,Ohio State Buckeyes,Ohio State
-Indiana,Indiana,Indiana Hoosiers,Indiana
+Auburn,Auburn,Auburn Tigers,Auburn
+BYU,BYU,BYU Cougars,Brigham Young
 Baylor,Baylor,Baylor Bears,Baylor
-UCLA,UCLA,UCLA Bruins,UCLA
-USC,USC,USC Trojans,Southern California|South Carolina (use carefully)
-Providence,Providence,Providence Friars,Providence
-Xavier,Xavier,Xavier Musketeers,Xavier
-Seton Hall,Seton Hall,Seton Hall Pirates,Seton Hall
+Bryant,Bryant,Bryant Bulldogs,Bryant
 Butler,Butler,Butler Bulldogs,Butler
+Cal Baptist,Cal Baptist,California Baptist Lancers,California Baptist|CBU
+Clemson,Clemson,Clemson Tigers,Clemson
+Colorado St,Colorado St,Colorado State Rams,Colorado State
+Creighton,Creighton,Creighton Bluejays,Creighton
 Dayton,Dayton,Dayton Flyers,Dayton
-St. Bonaventure,St. Bonaventure,St. Bonaventure Bonnies,Bonnies
-VCU,VCU,VCU Rams,Virginia Commonwealth
-San Diego St,San Diego St,San Diego State Aztecs,SDSU|San Diego State
-Utah St,Utah St,Utah State Aggies,Utah State|USU
+Drake,Drake,Drake Bulldogs,Drake
+Duke,Duke,Duke Blue Devils,
+Florida,Florida,Florida Gators,Florida
+Furman,Furman,Furman Paladins,
+Georgia,Georgia,Georgia Bulldogs,UGA
+Gonzaga,Gonzaga,Gonzaga Bulldogs,Gonzaga
+Grand Canyon,Grand Canyon,Grand Canyon Antelopes,GCU
+HWD/LEH,HWD/LEH,,Howard/Lehigh|HWD-LEH|First Four Midwest 16
+Hampton,Hampton,Hampton Pirates,Hampton
+Hawaii,Hawaii,Hawaii Rainbow Warriors,Hawai'i
+High Point,High Point,High Point Panthers,High Point
+Hofstra,Hofstra,Hofstra Pride,
+Houston,Houston,Houston Cougars,Houston
+Howard,Howard,Howard Bison,Howard
+Idaho,Idaho,Idaho Vandals,
+Illinois,Illinois,Illinois Fighting Illini,Illinois
+Indiana,Indiana,Indiana Hoosiers,Indiana
+Iowa,Iowa,Iowa Hawkeyes,
+Iowa St,Iowa St,Iowa State Cyclones,Iowa State|Iowa St.
+Kansas,Kansas,Kansas Jayhawks,Kansas
+Kansas St,Kansas St,Kansas State Wildcats,Kansas State|K-State
+Kennesaw St,Kennesaw St,Kennesaw State Owls,Kennesaw State|KSU
+Kentucky,Kentucky,Kentucky Wildcats,Kentucky
+LIU,LIU,LIU Sharks,Long Island University|LIU Brooklyn
+Lehigh,Lehigh,Lehigh Mountain Hawks,Lehigh
+Liberty,Liberty,Liberty Flames,Liberty
+Lipscomb,Lipscomb,Lipscomb Bisons,Lipscomb
+Louisville,Louisville,Louisville Cardinals,Louisville
+Loyola Chicago,Loyola Chicago,Loyola Chicago Ramblers,Loyola-Chicago
+Marquette,Marquette,Marquette Golden Eagles,Marquette
+Maryland,Maryland,Maryland Terrapins,Maryland
+McNeese,McNeese,McNeese Cowboys,McNeese State
+Memphis,Memphis,Memphis Tigers,Memphis
+Miami FL,Miami FL,Miami (FL) Hurricanes,Miami FL|Miami (FL)|Miami
+Miami OH,Miami OH,Miami RedHawks,Miami (Ohio)|Miami (OH)
+Michigan,Michigan,Michigan Wolverines,Michigan
+Michigan St,Michigan St,Michigan State Spartans,Michigan State
+Mississippi Val,Mississippi Val,Mississippi Valley State Delta Devils,MVSU|Mississippi Valley
+Missouri,Missouri,Missouri Tigers,Mizzou
+Montana,Montana,Montana Grizzlies,Montana
+NCST,NCST,NC State Wolfpack,NC State|North Carolina State
+NCST/SMU,NCST/SMU,,NC State/SMU|NCST-SMU|First Four West 11
+Nebraska,Nebraska,Nebraska Cornhuskers,Nebraska
 Nevada,Nevada,Nevada Wolf Pack,Nevada
 New Mexico,New Mexico,New Mexico Lobos,New Mexico
-Drake,Drake,Drake Bulldogs,Drake
-Loyola Chicago,Loyola Chicago,Loyola Chicago Ramblers,Loyola-Chicago
-Yale,Yale,Yale Bulldogs,Yale
-Liberty,Liberty,Liberty Flames,Liberty
-Grand Canyon,Grand Canyon,Grand Canyon Antelopes,GCU
-Wichita St,Wichita St,Wichita State Shockers,Wichita State
-Akron,Akron,Akron Zips,Akron
-McNeese St,McNeese St,McNeese Cowboys,McNeese|McNeese State
-Lipscomb,Lipscomb,Lipscomb Bisons,Lipscomb
 Norfolk St,Norfolk St,Norfolk State Spartans,Norfolk State|NORF
-NCST,NCST,NC State Wolfpack,NC State|North Carolina State
-SMU,SMU,SMU Mustangs,Southern Methodist
-Howard,Howard,Howard Bison,Howard
-Lehigh,Lehigh,Lehigh Mountain Hawks,Lehigh
-Montana,Montana,Montana Grizzlies,Montana
+North Carolina,North Carolina,North Carolina Tar Heels,UNC|Carolina
+North Dakota St,North Dakota St,North Dakota State Bison,North Dakota State|NDSU
+Northern Iowa,Northern Iowa,Northern Iowa Panthers,UNI
+Ohio St,Ohio St,Ohio State Buckeyes,Ohio State
+Penn,Penn,Pennsylvania Quakers,Pennsylvania|UPenn
+Prairie View,Prairie View,Prairie View A&M Panthers,Prairie View A&M|PV A&M|PVA&M
+Providence,Providence,Providence Friars,Providence
+Purdue,Purdue,Purdue Boilermakers,Purdue
+Queens,Queens,Queens Royals,Queens University
 SIU Edwardsville,SIU Edwardsville,SIUE Cougars,SIUE
-High Point,High Point,High Point Panthers,High Point
-Bryant,Bryant,Bryant Bulldogs,Bryant
-Wagner,Wagner,Wagner Seahawks,Wagner
-American,American,American Eagles,American University
-Alabama St,Alabama St,Alabama State Hornets,Alabama State
+SMU,SMU,SMU Mustangs,Southern Methodist
+Saint Louis,Saint Louis,Saint Louis Billikens,SLU|St. Louis
+Saint Marys,Saint Marys,Saint Mary's Gaels,St. Mary's|Saint Mary's|St. Mary's (CA)
+Samford,Samford,Samford Bulldogs,Samford
+San Diego St,San Diego St,San Diego State Aztecs,SDSU|San Diego State
+Santa Clara,Santa Clara,Santa Clara Broncos,
+Seton Hall,Seton Hall,Seton Hall Pirates,Seton Hall
+Siena,Siena,Siena Saints,Siena College
+South Florida,South Florida,South Florida Bulls,USF
 Southern,Southern,Southern Jaguars,Southern University
-Mississippi Val,Mississippi Val,Mississippi Valley State Delta Devils,MVSU|Mississippi Valley
-Hampton,Hampton,Hampton Pirates,Hampton
+St Johns,St Johns,St. John's (NY),St. John's|Saint John's
+St. Bonaventure,St. Bonaventure,St. Bonaventure Bonnies,Bonnies
+TCU,TCU,TCU Horned Frogs,Texas Christian
+Tennessee,Tennessee,Tennessee Volunteers,Tennessee
+Tennessee St,Tennessee St,Tennessee State Tigers,Tennessee State
+Texas A&M,Texas A&M,Texas A&M Aggies,TAMU
+Texas AM,Texas AM,Texas A&M Aggies,Texas A&M|TAMU
+Texas Tech,Texas Tech,Texas Tech Red Raiders,TTU
+Troy,Troy,Troy Trojans,
+UC San Diego,UC San Diego,UC San Diego Tritons,UCSD
+UCF,UCF,UCF Knights,Central Florida
+UCLA,UCLA,UCLA Bruins,UCLA
+UConn,UConn,Connecticut Huskies,Connecticut|UCONN
+USC,USC,USC Trojans,Southern California|South Carolina (use carefully)
+Utah St,Utah St,Utah State Aggies,Utah State|USU
+VCU,VCU,VCU Rams,Virginia Commonwealth
+Vanderbilt,Vanderbilt,Vanderbilt Commodores,Vandy
+Villanova,Villanova,Villanova Wildcats,Villanova
+Virginia,Virginia,Virginia Cavaliers,UVA
+Wagner,Wagner,Wagner Seahawks,Wagner
+Wichita St,Wichita St,Wichita State Shockers,Wichita State
+Wisconsin,Wisconsin,Wisconsin Badgers,Wisconsin
+Wright St,Wright St,Wright State Raiders,Wright State
+Xavier,Xavier,Xavier Musketeers,Xavier
+Yale,Yale,Yale Bulldogs,Yale

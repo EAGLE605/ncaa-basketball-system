@@ -70,20 +70,32 @@ def _load_map() -> None:
     _LOADED = True
 
 
-def resolve(name: str, fuzzy: bool = True, fuzzy_threshold: int = 85) -> str:
+def resolve(name: str, fuzzy: bool = False, fuzzy_threshold: int = 97) -> str:
     """
     Resolve any team name variant to its canonical form.
 
+    Fuzzy matching is OFF by default (fuzzy=False).
+
+    NCAA team names have dangerous near-duplicates:
+      "Iowa" vs "Iowa St", "Tennessee" vs "Tennessee St",
+      "Michigan" vs "Michigan St", "Ohio" vs "Miami OH", etc.
+    Fuzzy matching at any reasonable threshold produces false positives
+    for these pairs. All known aliases must be in team_name_map.csv.
+
+    To add a new alias: append a row to data/team_name_map.csv and
+    call reload(). Do NOT rely on fuzzy to paper over missing entries.
+
     Args:
         name:             Raw team name from any source
-        fuzzy:            Fall back to fuzzy matching if exact lookup fails
-        fuzzy_threshold:  Minimum rapidfuzz ratio score (0-100) for fuzzy match
+        fuzzy:            Fall back to fuzzy matching (default False — dangerous)
+        fuzzy_threshold:  Minimum rapidfuzz ratio score; 97+ required to avoid
+                          "Iowa"/"Iowa St" class collisions (default 97)
 
     Returns:
         Canonical team name string
 
     Raises:
-        UnresolvableTeamError: If name cannot be resolved and fuzzy fails
+        UnresolvableTeamError: If name cannot be resolved
     """
     _load_map()
 
@@ -92,7 +104,7 @@ def resolve(name: str, fuzzy: bool = True, fuzzy_threshold: int = 85) -> str:
     if key in _CACHE:
         return _CACHE[key]
 
-    # Fuzzy fallback
+    # Fuzzy fallback — disabled by default, threshold ≥97 required
     if fuzzy and _CACHE:
         try:
             from rapidfuzz import process as fuzz_process
