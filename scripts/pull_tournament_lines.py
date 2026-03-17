@@ -83,9 +83,22 @@ ESPN_TO_CANONICAL = {
 
 def normalize(name: str) -> str:
     """Map API team name to simulate.py canonical name."""
+    # Direct bracket match first (fastest path)
     if name in BRACKET_TEAMS:
         return name
-    return ESPN_TO_CANONICAL.get(name, name)
+    # Explicit override dict for First Four composites and known edge cases
+    if name in ESPN_TO_CANONICAL:
+        return ESPN_TO_CANONICAL[name]
+    # Fall back to CSV resolver (covers all espn_name entries)
+    from src.utils.team_names import resolve, UnresolvableTeamError
+    try:
+        canonical = resolve(name)
+        if canonical in BRACKET_TEAMS:
+            return canonical
+    except UnresolvableTeamError:
+        pass
+    # Not a bracket team — return as-is so caller can detect and skip
+    return name
 
 
 def devig(ml_a: int, ml_b: int) -> float:
@@ -110,7 +123,7 @@ def pull_live_lines() -> dict:
     logger.info("Fetching live NCAAB odds from The Odds API (Pinnacle)...")
 
     try:
-        odds_list = client.get_tournament_odds()
+        odds_list = client.get_tournament_odds(odds_format="decimal", regions="eu")
     except Exception as e:
         logger.error(f"Failed to fetch odds: {e}")
         return {}
@@ -120,6 +133,10 @@ def pull_live_lines() -> dict:
         home = normalize(game.get("home_team", ""))
         away = normalize(game.get("away_team", ""))
         if not home or not away:
+            continue
+        # Skip non-bracket teams (conference tournaments, NIT, etc.)
+        if home not in BRACKET_TEAMS or away not in BRACKET_TEAMS:
+            logger.debug(f"Skipping non-bracket game: {home} vs {away}")
             continue
 
         # Extract Pinnacle moneyline
