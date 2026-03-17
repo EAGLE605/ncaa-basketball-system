@@ -1,0 +1,71 @@
+{
+  "pipeline_id": "ncaab-prediction-v1",
+  "name": "NCAAB Men's Tournament Prediction Pipeline",
+  "description": "BartTorvik AdjEM → injury adjustments → ensemble WP → Monte Carlo → Kelly signals",
+  "active": false,
+  "stages": [
+    {
+      "name": "data_ingestion",
+      "type": "parallel",
+      "agents": ["torvik_loader", "odds_fetcher"],
+      "description": "Fetch BartTorvik AdjEM + Pinnacle market lines concurrently",
+      "inputs": {"year": "int", "mock": "bool"},
+      "outputs": {"teams": "Dict[str, Dict]", "market_lines": "Optional[Dict]"},
+      "status": "pending",
+      "on_error": "abort"
+    },
+    {
+      "name": "injury_adjustment",
+      "type": "sequential",
+      "agent": "injury_adjuster",
+      "description": "Apply known injury AdjEM deltas on top of Torvik baseline",
+      "inputs": {"teams": "Dict[str, Dict]", "injury_file": "Optional[str]"},
+      "outputs": {"teams_adjusted": "Dict[str, Dict]"},
+      "status": "pending",
+      "on_error": "skip"
+    },
+    {
+      "name": "win_probability",
+      "type": "sequential",
+      "agent": "wp_builder",
+      "description": "Build NxN WP matrix: 65% Pinnacle + 35% Torvik when lines available",
+      "inputs": {"teams_adjusted": "Dict", "market_lines": "Optional[Dict]"},
+      "outputs": {"wp_table": "Dict[str, Dict[str, float]]"},
+      "status": "pending",
+      "on_error": "abort"
+    },
+    {
+      "name": "monte_carlo",
+      "type": "sequential",
+      "agent": "tournament_simulator",
+      "description": "250k vectorized numpy simulations → per-team round probabilities",
+      "inputs": {"bracket": "Dict[str, List[str]]", "wp_table": "Dict"},
+      "outputs": {"sim_results": "Dict[str, Dict[str, float]]"},
+      "status": "pending",
+      "config": {"n_sims": 250000, "seed": 42},
+      "on_error": "abort"
+    },
+    {
+      "name": "kelly_sizing",
+      "type": "sequential",
+      "agent": "kelly_sizer",
+      "description": "Compute half-Kelly fractions for any available betting lines",
+      "inputs": {"sim_results": "Dict", "market_lines": "Optional[Dict]"},
+      "outputs": {"bets": "List[Dict]"},
+      "status": "pending",
+      "config": {"kelly_fraction": 0.5, "min_edge": 0.02, "max_bet": 0.05},
+      "on_error": "skip"
+    },
+    {
+      "name": "output",
+      "type": "sequential",
+      "agent": "signal_writer",
+      "description": "Write results JSON + betting signals + ntfy alert if edge > 3%",
+      "inputs": {"sim_results": "Dict", "bets": "List[Dict]", "year": "int"},
+      "outputs": {"results_path": "str", "alert_sent": "bool"},
+      "status": "pending",
+      "on_error": "skip"
+    }
+  ],
+  "created_at": "2026-03-17"
+}
