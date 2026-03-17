@@ -35,25 +35,45 @@ class BartTorvik:
         duke = teams["Duke"]         # {"AdjOE": 122.5, "AdjDE": 89.7, ...}
     """
 
-    # Column positions in BartTorvik's raw JSON array
-    # (verify each season — they occasionally shift)
+    # Column positions in BartTorvik's raw JSON array.
+    # Verified live against 2016-2025 data (2026-03-17).
+    # Schema is STABLE at 37 columns across all years 2016-2025.
+    # IMPORTANT:
+    #   - col[0] is TEAM NAME (string), NOT rank.
+    #   - Rows are served in internal DB order, NOT sorted by AdjEM.
+    #     Sort client-side if you need rank order.
+    #   - AdjEM is NOT a direct column — compute as AdjOE - AdjDE.
+    #   - col[15] is actual AdjT (possessions/40 min, range ~60-75).
+    #     The original assumption of col[12]=AdjT was WRONG (col[12]=DRB).
+    #   - col[3] = Barthag (power rating = win prob vs avg D1 team).
     _COLS = {
-        "rank":     0,
-        "team":     1,
-        "conf":     2,
-        "record":   3,
-        "AdjOE":    4,
-        "AdjDE":    5,
-        "AdjT":     12,
-        "Barthag":  None,   # computed: win% vs avg D1
-        "eFG_off":  6,
-        "eFG_def":  7,
-        "TO_off":   8,      # turnover rate (offense)
-        "TO_def":   9,
-        "OR_off":   10,     # offensive rebound rate
-        "OR_def":   11,
-        "P3_off":   None,   # 3pt rate off (column varies)
-        "P3_def":   None,
+        "team":     0,      # Team name string
+        "AdjOE":    1,      # Adjusted Offensive Efficiency (pts/100 poss)
+        "AdjDE":    2,      # Adjusted Defensive Efficiency (pts/100 poss allowed)
+        "Barthag":  3,      # Power rating (win prob vs avg D1)
+        "record":   4,      # Record string e.g. "35-4"
+        "wins":     5,      # Wins (int)
+        "games":    6,      # Games played (int)
+        "eFG_off":  7,      # Effective FG% offense
+        "eFG_def":  8,      # Effective FG% defense
+        "TO_off":   9,      # Turnover rate offense
+        "TO_def":   10,     # Turnover rate defense
+        "OR_off":   11,     # Offensive rebound rate
+        "OR_def":   12,     # Defensive rebound rate (NOT AdjT — old bug)
+        "FTR_off":  13,     # Free throw rate offense
+        "FTR_def":  14,     # Free throw rate defense
+        "AdjT":     15,     # Adjusted Tempo (possessions/40 min) — CORRECT column
+        "2P_off":   16,     # Two-point % offense
+        "2P_def":   17,     # Two-point % defense
+        "3P_off":   18,     # Three-point % offense
+        "3P_def":   19,     # Three-point % defense
+        "3PR_off":  20,     # Three-point attempt rate offense
+        "3PR_def":  21,     # Three-point attempt rate defense
+        # cols 22-29: duplicates/rank fields, not used
+        "year":     30,     # Season year (int)
+        # cols 31-33: empty strings
+        "WAB":      34,     # Wins Above Bubble
+        # col 35: unknown metric; col 36: null
     }
 
     def __init__(self):
@@ -89,22 +109,18 @@ class BartTorvik:
             year: Season year (e.g. 2026 = 2025-26 season).
 
         Returns:
-            Dict keyed by team name -> stats dict:
+            Dict keyed by team name -> stats dict. Teams are in internal DB
+            order (NOT sorted by AdjEM) — sort client-side if needed.
             {
-                "rank": int,
                 "team": str,
-                "conf": str,
-                "record": str,
-                "AdjOE": float,
-                "AdjDE": float,
-                "AdjEM": float,   # computed: AdjOE - AdjDE
-                "AdjT": float,
-                "eFG_off": float,
-                "eFG_def": float,
-                "TO_off": float,
-                "TO_def": float,
-                "OR_off": float,
-                "OR_def": float,
+                "AdjOE": float,   # Adjusted Offensive Efficiency (pts/100 poss)
+                "AdjDE": float,   # Adjusted Defensive Efficiency
+                "AdjEM": float,   # Computed: AdjOE - AdjDE
+                "Barthag": float, # Power rating (win prob vs avg D1)
+                "record": str,    # e.g. "35-4"
+                "AdjT": float,    # Tempo (possessions/40 min, range ~60-75)
+                "eFG_off/def": float, "TO_off/def": float,
+                "OR_off/def": float, "3P_off/def": float, "WAB": float,
             }
         """
         raw = self._fetch_raw(year)
@@ -120,27 +136,34 @@ class BartTorvik:
                     except (TypeError, ValueError):
                         return None
 
-                team_name = str(row[1]).strip()
-                adj_oe = safe_float(row[4])
-                adj_de = safe_float(row[5])
+                # Verified column mapping (2016-2025 stable, 37 cols):
+                # col[0]=team, col[1]=AdjOE, col[2]=AdjDE, col[3]=Barthag,
+                # col[4]=record, col[15]=AdjT (tempo), col[30]=year
+                team_name = str(row[0]).strip()
+                if not team_name:
+                    continue
+                adj_oe = safe_float(row[1])
+                adj_de = safe_float(row[2])
                 adj_em = round(adj_oe - adj_de, 4) if adj_oe and adj_de else None
-                adj_t  = safe_float(row[12]) if len(row) > 12 else None
+                adj_t  = safe_float(row[15]) if len(row) > 15 else None
 
                 result[team_name] = {
-                    "rank":    int(row[0]) if row[0] else None,
                     "team":    team_name,
-                    "conf":    str(row[2]).strip() if len(row) > 2 else None,
-                    "record":  str(row[3]).strip() if len(row) > 3 else None,
                     "AdjOE":   adj_oe,
                     "AdjDE":   adj_de,
                     "AdjEM":   adj_em,
+                    "Barthag": safe_float(row[3]) if len(row) > 3 else None,
+                    "record":  str(row[4]).strip() if len(row) > 4 else None,
                     "AdjT":    adj_t,
-                    "eFG_off": safe_float(row[6])  if len(row) > 6  else None,
-                    "eFG_def": safe_float(row[7])  if len(row) > 7  else None,
-                    "TO_off":  safe_float(row[8])  if len(row) > 8  else None,
-                    "TO_def":  safe_float(row[9])  if len(row) > 9  else None,
-                    "OR_off":  safe_float(row[10]) if len(row) > 10 else None,
-                    "OR_def":  safe_float(row[11]) if len(row) > 11 else None,
+                    "eFG_off": safe_float(row[7])  if len(row) > 7  else None,
+                    "eFG_def": safe_float(row[8])  if len(row) > 8  else None,
+                    "TO_off":  safe_float(row[9])  if len(row) > 9  else None,
+                    "TO_def":  safe_float(row[10]) if len(row) > 10 else None,
+                    "OR_off":  safe_float(row[11]) if len(row) > 11 else None,
+                    "OR_def":  safe_float(row[12]) if len(row) > 12 else None,
+                    "3P_off":  safe_float(row[18]) if len(row) > 18 else None,
+                    "3P_def":  safe_float(row[19]) if len(row) > 19 else None,
+                    "WAB":     safe_float(row[34]) if len(row) > 34 else None,
                 }
             except (IndexError, TypeError) as e:
                 logger.debug(f"BartTorvik row parse error: {e} — row={row[:5]}")
