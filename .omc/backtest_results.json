@@ -1,0 +1,42 @@
+{
+  "ensemble_accuracy": {
+    "R64": 1.0,
+    "overall": 1.0
+  },
+  "total_roi_pct": 0.0,
+  "total_sharpe": 0.0,
+  "clv_summary": null,
+  "year_errors": {},
+  "per_year": [
+    {
+      "year": 2022,
+      "accuracy": {
+        "R64": 1.0,
+        "overall": 1.0
+      },
+      "brier": 0.0,
+      "roi_pct": 0.0,
+      "calibration_skipped": true
+    },
+    {
+      "year": 2023,
+      "accuracy": {
+        "R64": 1.0,
+        "overall": 1.0
+      },
+      "brier": 0.0,
+      "roi_pct": 0.0,
+      "calibration_skipped": true
+    },
+    {
+      "year": 2024,
+      "accuracy": {
+        "R64": 1.0,
+        "overall": 1.0
+      },
+      "brier": 0.0,
+      "roi_pct": 0.0,
+      "calibration_skipped": true
+    }
+  ]
+}

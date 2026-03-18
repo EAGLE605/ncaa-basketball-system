@@ -1,0 +1,50 @@
+{
+  "Duke": {
+    "AdjEM": 36.69,
+    "AdjT": 67.5,
+    "AdjOE": 122.35,
+    "AdjDE": 85.66
+  },
+  "Michigan": {
+    "AdjEM": 36.61,
+    "AdjT": 65.2,
+    "AdjOE": 120.27,
+    "AdjDE": 83.66
+  },
+  "Arizona": {
+    "AdjEM": 35.54,
+    "AdjT": 69.1,
+    "AdjOE": 119.12,
+    "AdjDE": 83.58
+  },
+  "Florida": {
+    "AdjEM": 33.82,
+    "AdjT": 68.3,
+    "AdjOE": 115.6,
+    "AdjDE": 81.78
+  },
+  "seed16E": {
+    "AdjEM": -8.0,
+    "AdjT": 67.5,
+    "AdjOE": 95.0,
+    "AdjDE": 103.0
+  },
+  "seed16W": {
+    "AdjEM": -8.0,
+    "AdjT": 67.5,
+    "AdjOE": 95.0,
+    "AdjDE": 103.0
+  },
+  "seed16M": {
+    "AdjEM": -8.0,
+    "AdjT": 67.5,
+    "AdjOE": 95.0,
+    "AdjDE": 103.0
+  },
+  "seed16S": {
+    "AdjEM": -8.0,
+    "AdjT": 67.5,
+    "AdjOE": 95.0,
+    "AdjDE": 103.0
+  }
+}

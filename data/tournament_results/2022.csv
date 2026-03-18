@@ -1,0 +1,5 @@
+round,region,team_a,team_b,seed_a,seed_b,winner,score_a,score_b
+R64,East,Duke,seed16E,1,16,Duke,93,55
+R64,West,Arizona,seed16W,1,16,Arizona,88,62
+R64,Midwest,Michigan,seed16M,1,16,Michigan,85,60
+R64,South,Florida,seed16S,1,16,Florida,90,58

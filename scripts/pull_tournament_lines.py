@@ -1,18 +1,22 @@
 """
-Pull live Pinnacle moneylines for NCAA Men's Basketball tournament games
-and write brackets/2026/market_lines.json for use by simulate.py.
+Pull live Pinnacle moneylines and totals for NCAA Men's Basketball tournament games
+and write brackets/2026/market_lines.json and market_lines_totals.json for simulate.py.
 
-simulate.py auto-loads market_lines.json on startup if it exists,
-enabling the 65% Pinnacle / 35% BartTorvik ensemble model.
+simulate.py auto-loads both files on startup if they exist,
+enabling the 65% Pinnacle / 35% BartTorvik ensemble model with market totals.
 
 Usage:
-    python scripts/pull_tournament_lines.py            # pull live lines
+    python scripts/pull_tournament_lines.py            # pull live moneylines
     python scripts/pull_tournament_lines.py --dry-run  # print without writing
     python scripts/pull_tournament_lines.py --mock     # fixture data (no API)
+    python scripts/pull_tournament_lines.py --totals   # pull BOTH moneylines AND totals
 
 Output:
     brackets/2026/market_lines.json
     {"Team A vs Team B": 0.732, ...}  <- P(Team A wins), de-vigged
+
+    brackets/2026/market_lines_totals.json
+    {"Team A vs Team B": 145.5, ...}  <- over/under point total
 
 Requires:
     ODDS_API_KEY in .env or environment variable
@@ -30,7 +34,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger("pull_lines")
 
-OUT_PATH = Path(__file__).parent.parent / "brackets" / "2026" / "market_lines.json"
+OUT_PATH        = Path(__file__).parent.parent / "brackets" / "2026" / "market_lines.json"
+OUT_PATH_TOTALS = Path(__file__).parent.parent / "brackets" / "2026" / "market_lines_totals.json"
 
 # Teams in the 2026 bracket (matches simulate.py keys exactly)
 BRACKET_TEAMS = {
@@ -187,20 +192,96 @@ def mock_lines() -> dict:
     }
 
 
+def mock_totals() -> dict:
+    """Fixture totals lines for testing (no API call)."""
+    return {
+        "Duke vs Siena":              141.5,
+        "Michigan vs HWD/LEH":        138.5,
+        "Florida vs Prairie View":    137.5,
+        "UCLA vs UCF":                160.5,
+        "Ohio St vs TCU":             154.5,
+    }
+
+
+def pull_totals_lines() -> dict:
+    """
+    Fetch current NCAAB tournament totals (over/under) from The Odds API.
+    Uses Pinnacle, eu region, decimal odds format.
+    Returns dict: "Team A vs Team B" -> over/under point total (float)
+    """
+    from src.api.odds_client import OddsClient
+
+    client = OddsClient()
+    logger.info("Fetching live NCAAB totals from The Odds API (Pinnacle, eu region)...")
+
+    try:
+        odds_list = client.get_tournament_odds(
+            markets="totals",
+            regions="eu",
+            odds_format="decimal",
+        )
+    except Exception as e:
+        logger.error(f"Failed to fetch totals: {e}")
+        return {}
+
+    totals = {}
+    for game in odds_list:
+        home = normalize(game.get("home_team", ""))
+        away = normalize(game.get("away_team", ""))
+        if not home or not away:
+            continue
+        if home not in BRACKET_TEAMS or away not in BRACKET_TEAMS:
+            logger.debug(f"Skipping non-bracket game: {home} vs {away}")
+            continue
+
+        bookmakers = game.get("bookmakers", [])
+        pinnacle = next((b for b in bookmakers if b["key"] == "pinnacle"), None)
+        if not pinnacle:
+            logger.debug(f"No Pinnacle totals line for {home} vs {away}")
+            continue
+
+        totals_mkt = next((m for m in pinnacle.get("markets", []) if m["key"] == "totals"), None)
+        if not totals_mkt:
+            continue
+
+        # Both Over and Under share the same point value; read from the Over outcome
+        over_outcome = next(
+            (o for o in totals_mkt.get("outcomes", []) if o.get("name", "").lower() == "over"),
+            None,
+        )
+        if over_outcome is None:
+            logger.warning(f"No Over outcome for {home} vs {away}: {totals_mkt.get('outcomes')}")
+            continue
+
+        point = over_outcome.get("point")
+        if point is None:
+            logger.warning(f"No point value on Over outcome for {home} vs {away}")
+            continue
+
+        key = f"{home} vs {away}"
+        totals[key] = float(point)
+        logger.info(f"  {home} vs {away}: total={point}")
+
+    logger.info(f"Fetched {len(totals)} matchups with Pinnacle totals")
+    return totals
+
+
 def main():
     parser = argparse.ArgumentParser(description="Pull Pinnacle tournament lines for simulate.py")
-    parser.add_argument("--dry-run", action="store_true", help="Print lines without writing file")
+    parser.add_argument("--dry-run", action="store_true", help="Print lines without writing files")
     parser.add_argument("--mock",    action="store_true", help="Use fixture data (no API)")
+    parser.add_argument("--totals",  action="store_true", help="Pull BOTH moneylines AND totals")
     args = parser.parse_args()
 
+    # --- Moneylines ---
     if args.mock:
         lines = mock_lines()
-        logger.info(f"[MOCK] Using {len(lines)} fixture lines")
+        logger.info(f"[MOCK] Using {len(lines)} fixture moneylines")
     else:
         lines = pull_live_lines()
 
     if not lines:
-        logger.error("No lines fetched — nothing to write")
+        logger.error("No moneylines fetched — nothing to write")
         sys.exit(1)
 
     print(f"\n{'Matchup':45s}  P(Home wins)")
@@ -208,15 +289,42 @@ def main():
     for matchup, prob in sorted(lines.items()):
         print(f"  {matchup:43s}  {prob:.4f}")
 
-    if args.dry_run:
-        logger.info("\n--dry-run: file not written")
+    if not args.dry_run:
+        OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(OUT_PATH, "w", encoding="utf-8") as f:
+            json.dump(lines, f, indent=2)
+        logger.info(f"\nWrote {len(lines)} moneylines to {OUT_PATH}")
+        logger.info("Run simulate.py to use these lines (auto-loaded on startup).")
+    else:
+        logger.info("\n--dry-run: moneylines file not written")
+
+    # --- Totals (only when --totals flag is set) ---
+    if not args.totals:
         return
 
-    OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with open(OUT_PATH, "w", encoding="utf-8") as f:
-        json.dump(lines, f, indent=2)
-    logger.info(f"\nWrote {len(lines)} lines to {OUT_PATH}")
-    logger.info("Run simulate.py to use these lines (auto-loaded on startup).")
+    if args.mock:
+        totals = mock_totals()
+        logger.info(f"[MOCK] Using {len(totals)} fixture totals")
+    else:
+        totals = pull_totals_lines()
+
+    if not totals:
+        logger.warning("No totals fetched — totals file not written")
+        return
+
+    print(f"\n{'Matchup':45s}  Total")
+    print("-" * 60)
+    for matchup, total in sorted(totals.items()):
+        print(f"  {matchup:43s}  {total:.1f}")
+
+    if not args.dry_run:
+        OUT_PATH_TOTALS.parent.mkdir(parents=True, exist_ok=True)
+        with open(OUT_PATH_TOTALS, "w", encoding="utf-8") as f:
+            json.dump(totals, f, indent=2)
+        logger.info(f"\nWrote {len(totals)} totals to {OUT_PATH_TOTALS}")
+        logger.info("Run simulate.py to use these totals (auto-loaded on startup).")
+    else:
+        logger.info("\n--dry-run: totals file not written")
 
 
 if __name__ == "__main__":

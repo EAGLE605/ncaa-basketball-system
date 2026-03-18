@@ -20,12 +20,13 @@ Generate with: python scripts/pull_tournament_lines.py
 import os
 import sys
 import json
+from pathlib import Path
+
 import numpy as np
 from scipy.stats import norm
-from collections import defaultdict
 
 # Add project root for src imports
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 # Enhanced modules (graceful fallback if not installed)
 try:
@@ -65,6 +66,17 @@ if _ml_path.exists():
         _ml_data = _json.load(_f)
     MARKET_LINES = {tuple(k.split(" vs ")): v for k, v in _ml_data.items()}
     print(f"[simulate] Auto-loaded {len(MARKET_LINES)} market lines from market_lines.json")
+
+# Auto-load from brackets/2026/market_lines_totals.json if present.
+# Generate it with: python scripts/pull_tournament_lines.py --totals
+MARKET_TOTALS: dict = {}
+_mt_path = _pathlib.Path(__file__).parent / "market_lines_totals.json"
+if _mt_path.exists():
+    with open(_mt_path) as _f:
+        import json as _json
+        _mt_data = _json.load(_f)
+    MARKET_TOTALS = dict(_mt_data)  # "Team A vs Team B" -> float
+    print(f"[simulate] Auto-loaded {len(MARKET_TOTALS)} market totals from market_lines_totals.json")
 
 # ---------------------------------------------------------------------------
 # INJURY ADJUSTMENTS
@@ -491,8 +503,11 @@ def compute_projected_totals(bracket: dict) -> list:
         for ta, tb in games:
             a = TEAMS[ta]
             b = TEAMS[tb]
-            # Market total unavailable from market_lines.json (it only has P(home wins))
-            # We could store totals separately; for now use None
+            # Look up market total from MARKET_TOTALS (try both key orderings)
+            market_total = (
+                MARKET_TOTALS.get(f"{ta} vs {tb}")
+                or MARKET_TOTALS.get(f"{tb} vs {ta}")
+            )
             proj = project_game(
                 adjOE_a=a["ao"],
                 adjDE_a=a["ad"],
@@ -502,7 +517,7 @@ def compute_projected_totals(bracket: dict) -> list:
                 tempo_b=b["tempo"],
                 team_a=ta,
                 team_b=tb,
-                market_total=None,
+                market_total=market_total,
             )
             proj["region"] = region
             projections.append(proj)

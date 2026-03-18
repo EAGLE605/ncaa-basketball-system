@@ -1,319 +1,238 @@
 """
-NCAAB Men's Basketball Prediction Pipeline Runner.
+2026 NCAA March Madness Pipeline Orchestrator.
 
-Executes the full prediction pipeline:
-  Stage 1 (parallel): BartTorvik AdjEM + Pinnacle market lines
-  Stage 2: Injury adjustments
-  Stage 3: Win probability ensemble (65% market / 35% torvik)
-  Stage 4: 250k Monte Carlo simulation
-  Stage 5: Half-Kelly bet sizing
-  Stage 6: Output (results JSON + console signal table)
+Thin wrapper that:
+  1. Refreshes brackets/2026/market_lines.json via pull_tournament_lines.py functions
+  2. Runs brackets/2026/simulate.py (direct import, not subprocess)
+  3. Loads results_2026.json and prints top-10 champion odds
+  4. Shows Kelly bet sizing for any games with market lines
 
 Usage:
-    python scripts/run_pipeline.py --year 2026 --mock
-    python scripts/run_pipeline.py --year 2026
-    python scripts/run_pipeline.py --year 2026 --output-dir brackets/2026/
+    python scripts/run_pipeline.py             # pull live lines + run simulation
+    python scripts/run_pipeline.py --mock      # use fixture lines (no API call)
+    python scripts/run_pipeline.py --skip-lines  # skip API, use existing market_lines.json
 """
 
 import argparse
-import concurrent.futures
 import json
-import logging
 import sys
-import time
 from pathlib import Path
-from typing import Dict, List, Optional
 
-# Add project root to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# Project root on path
+ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(ROOT))
 
-from src.api.barttorvik import BartTorvik
-from src.api.odds_client import OddsClient
-from src.model.win_probability import build_wp_table
-from src.simulation.tournament import simulate_tournament, top_n
-from src.betting.kelly import kelly_fraction, edge
+# Add brackets/2026 so we can import simulate directly
+BRACKETS_2026 = ROOT / "brackets" / "2026"
+sys.path.insert(0, str(BRACKETS_2026))
 
-logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
-logger = logging.getLogger("pipeline")
+MARKET_LINES_PATH = BRACKETS_2026 / "market_lines.json"
+RESULTS_PATH      = BRACKETS_2026 / "results_2026.json"
 
-# ---------------------------------------------------------------------------
-# Injury adjustments (update each tournament)
-# ---------------------------------------------------------------------------
-INJURY_ADJUSTMENTS: Dict[str, float] = {
-    "Alabama":    -1.20,   # Holloway out
-    "Duke":       -0.66,   # Foster limited
-    "Texas Tech": -0.70,   # Toppin partial
-    "Louisville": -0.50,   # Brown out
-}
 
 # ---------------------------------------------------------------------------
-# Stage implementations
+# Step 1: Refresh market lines
 # ---------------------------------------------------------------------------
 
-def stage_fetch_torvik(year: int, mock: bool) -> Dict[str, Dict]:
-    """Stage 1a: Load BartTorvik AdjEM for tournament field."""
+def refresh_market_lines(mock: bool) -> dict:
+    """Pull lines (or use mock fixture) and write market_lines.json."""
+    from scripts.pull_tournament_lines import pull_live_lines, mock_lines
+
     if mock:
-        logger.info("[MOCK] BartTorvik: returning fixture data")
-        return _mock_torvik_data()
+        lines = mock_lines()
+        print(f"[MOCK] Using {len(lines)} fixture market lines")
+    else:
+        lines = pull_live_lines()
+        if not lines:
+            print("WARNING: No lines fetched from API. market_lines.json not updated.")
+            return {}
 
-    bt = BartTorvik()
-    logger.info(f"Fetching BartTorvik {year} season data...")
-    return bt.get_season(year)
-
-
-def stage_fetch_odds(mock: bool) -> Optional[Dict]:
-    """Stage 1b: Fetch Pinnacle market lines from The Odds API."""
-    if mock:
-        logger.info("[MOCK] Odds API: skipping (no mock lines)")
-        return None
-    try:
-        client = OddsClient()
-        logger.info("Fetching Pinnacle tournament lines...")
-        raw = client.get_pinnacle_lines()
-        probs = client.extract_pinnacle_probs(raw)
-        logger.info(f"Got Pinnacle lines for {len(probs)} games")
-        return probs
-    except RuntimeError as e:
-        logger.warning(f"Odds API unavailable, using pure BartTorvik: {e}")
-        return None
+    MARKET_LINES_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(MARKET_LINES_PATH, "w", encoding="utf-8") as f:
+        json.dump(lines, f, indent=2)
+    print(f"Wrote {len(lines)} lines to {MARKET_LINES_PATH}")
+    return lines
 
 
-def stage_injury_adjustments(teams: Dict[str, Dict]) -> Dict[str, Dict]:
-    """Stage 2: Apply injury AdjEM deltas."""
-    adjusted = {}
-    for team, stats in teams.items():
-        if stats is None:
-            adjusted[team] = stats
-            continue
-        delta = INJURY_ADJUSTMENTS.get(team, 0.0)
-        if delta != 0.0:
-            new_stats = dict(stats)
-            new_stats["AdjEM"] = (stats.get("AdjEM") or 0.0) + delta
-            new_stats["_injury_delta"] = delta
-            adjusted[team] = new_stats
-            logger.info(f"  {team}: AdjEM adjusted by {delta:+.2f}")
-        else:
-            adjusted[team] = stats
-    return adjusted
+# ---------------------------------------------------------------------------
+# Step 2: Run simulation
+# ---------------------------------------------------------------------------
+
+def run_simulation() -> None:
+    """Import and execute brackets/2026/simulate.py run logic."""
+    # Import the module (sys.path already includes brackets/2026)
+    import simulate as sim_module
+
+    print("\n--- Running 2026 simulation ---")
+    adv     = sim_module.run_simulation()
+    bracket = sim_module.generate_bracket(adv)
+    sim_module.print_results(adv, bracket)
+    projections = sim_module.compute_projected_totals(bracket)
+
+    out_path = str(BRACKETS_2026 / "results_2026.json")
+    sim_module.save_json(adv, bracket, out_path, projections)
 
 
-def stage_win_probability(
-    teams: Dict[str, Dict],
-    market_lines: Optional[Dict],
-) -> Dict[str, Dict[str, float]]:
-    """Stage 3: Build WP table (ensemble or pure torvik)."""
-    mode = "ensemble (65% market + 35% torvik)" if market_lines else "pure BartTorvik"
-    logger.info(f"Building win probability table: {mode}")
-    return build_wp_table(teams, market_lines)
+# ---------------------------------------------------------------------------
+# Step 3: Load results and display top-10 champion odds
+# ---------------------------------------------------------------------------
 
+def display_results() -> dict:
+    """Load results_2026.json and print top-10 champion odds."""
+    if not RESULTS_PATH.exists():
+        print(f"ERROR: {RESULTS_PATH} not found. Did the simulation write results?")
+        return {}
 
-def stage_monte_carlo(
-    bracket: Dict[str, List[str]],
-    wp_table: Dict[str, Dict[str, float]],
-    n_sims: int = 250_000,
-) -> Dict[str, Dict[str, float]]:
-    """Stage 4: Vectorized Monte Carlo tournament simulation."""
-    logger.info(f"Running {n_sims:,} tournament simulations...")
-    t0 = time.time()
-    results = simulate_tournament(bracket, wp_table, n_sims=n_sims)
-    elapsed = time.time() - t0
-    logger.info(f"Simulation complete in {elapsed:.1f}s")
+    with open(RESULTS_PATH, encoding="utf-8") as f:
+        results = json.load(f)
+
+    champ_odds = results.get("championship_odds", {})
+    print("\n=== TOP 10 CHAMPION ODDS ===")
+    for i, (team, pct_str) in enumerate(champ_odds.items()):
+        if i >= 10:
+            break
+        pct = float(pct_str.rstrip("%"))
+        bar = "#" * int(pct * 2)
+        print(f"  {team:<22} {pct_str:>7}  {bar}")
+
     return results
 
 
-def stage_kelly_sizing(
-    sim_results: Dict[str, Dict[str, float]],
-    market_lines: Optional[Dict],
-    kelly_frac: float = 0.5,
-    min_edge_pct: float = 0.02,
-    max_bet_pct: float = 0.05,
-) -> List[Dict]:
-    """Stage 5: Compute half-Kelly bet sizes for available lines."""
+# ---------------------------------------------------------------------------
+# Step 4: Kelly bet sizing for matchups with market lines
+# ---------------------------------------------------------------------------
+
+def show_kelly_bets(results: dict, market_lines: dict) -> None:
+    """Print Kelly bet sizing for any R64 matchups with market lines."""
     if not market_lines:
-        logger.info("No market lines — skipping Kelly sizing")
-        return []
+        print("\nNo market lines available -- skipping Kelly sizing.")
+        return
+
+    from src.betting.kelly import kelly_fraction, edge
+
+    full_adv = results.get("full_advancement", {})
+
+    # market_lines.json format: "Team A vs Team B" -> P(Team A wins) de-vigged
+    # We need American moneylines to compute Kelly; derive implied ML from de-vigged prob.
+    # Since we only have the de-vigged probability (not raw moneylines), we estimate
+    # a fair-vig ML for display purposes using -110 standard vig.
+    def prob_to_ml(p: float) -> int:
+        """Convert probability to American moneyline (fair, no vig)."""
+        if p <= 0 or p >= 1:
+            return 0
+        if p >= 0.5:
+            return -int(round(p / (1 - p) * 100))
+        else:
+            return int(round((1 - p) / p * 100))
 
     bets = []
-    for matchup, line_data in market_lines.items():
-        home = line_data.get("home")
-        away = line_data.get("away")
-        home_res = sim_results.get(home, {})
-        away_res  = sim_results.get(away, {})
+    for matchup, p_market_home in market_lines.items():
+        parts = matchup.split(" vs ")
+        if len(parts) != 2:
+            continue
+        home, away = parts[0].strip(), parts[1].strip()
 
-        # Use R64 probability as our model probability for this game
-        p_home_model = home_res.get("R64", 0.5)
-        p_away_model = away_res.get("R64", 0.5)
+        # Get model championship probability as model signal
+        # Use R64 advancement rate as the relevant round probability
+        home_adv = full_adv.get(home, {})
+        away_adv = full_adv.get(away, {})
 
-        ml_home = line_data.get("home_ml")
-        ml_away = line_data.get("away_ml")
-        if not ml_home or not ml_away:
+        # full_advancement stores strings like "97.3%" -- convert to float
+        def pct_to_float(s):
+            try:
+                return float(str(s).rstrip("%")) / 100.0
+            except (ValueError, AttributeError):
+                return 0.0
+
+        p_home_model = pct_to_float(home_adv.get("R64", "0%"))
+        p_away_model = pct_to_float(away_adv.get("R64", "0%"))
+
+        # Market-implied moneylines (reconstructed from de-vigged prob)
+        ml_home = prob_to_ml(p_market_home)
+        ml_away = prob_to_ml(1.0 - p_market_home)
+
+        if ml_home == 0 or ml_away == 0:
             continue
 
-        edge_home = edge(p_home_model, ml_home)
-        edge_away = edge(p_away_model, ml_away)
-
-        for team, p_model, ml, e in [
-            (home, p_home_model, ml_home, edge_home),
-            (away, p_away_model, ml_away, edge_away),
+        for team, p_model, ml in [
+            (home, p_home_model, ml_home),
+            (away, p_away_model, ml_away),
         ]:
-            if e >= min_edge_pct:
-                f = kelly_fraction(p_model, ml, fraction=kelly_frac, max_bet=max_bet_pct)
+            e = edge(p_model, ml)
+            if e >= 0.02:
+                f = kelly_fraction(p_model, ml, fraction=0.5, max_bet=0.05)
                 if f > 0:
                     bets.append({
                         "matchup": matchup,
-                        "team": team,
-                        "p_model": round(p_model, 4),
-                        "ml": ml,
-                        "edge": round(e, 4),
-                        "kelly_fraction": round(f, 4),
+                        "team":    team,
+                        "p_model": p_model,
+                        "p_mkt":   p_market_home if team == home else 1.0 - p_market_home,
+                        "ml":      ml,
+                        "edge":    e,
+                        "kelly":   f,
                     })
 
     bets.sort(key=lambda x: x["edge"], reverse=True)
-    return bets
 
+    if not bets:
+        print("\nNo Kelly bets with edge >= 2% found.")
+        return
 
-def stage_output(
-    sim_results: Dict[str, Dict[str, float]],
-    bets: List[Dict],
-    year: int,
-    output_dir: str = "brackets/2026/",
-) -> str:
-    """Stage 6: Write results and print signal table."""
-    output = {
-        "year": year,
-        "model": "BartTorvik + Pinnacle ensemble",
-        "n_sims": 250_000,
-        "champion_probs": {
-            t: round(sim_results[t]["champion"], 4)
-            for t in sorted(sim_results, key=lambda x: sim_results[x]["champion"], reverse=True)
-            if sim_results[t]["champion"] > 0.001
-        },
-        "bets": bets,
-    }
-
-    path = Path(output_dir) / f"results_{year}.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w") as f:
-        json.dump(output, f, indent=2)
-    logger.info(f"Results written to {path}")
-
-    # Print top 10 champion probabilities
-    print("\n=== NCAAB Men's Tournament Champion Probabilities ===")
-    for team, prob in list(output["champion_probs"].items())[:10]:
-        bar = "#" * int(prob * 200)
-        print(f"  {team:<20} {prob:>6.1%}  {bar}")
-
-    # Print betting signals
-    if bets:
-        print(f"\n=== Betting Signals ({len(bets)} bets with edge > 2%) ===")
-        for bet in bets[:10]:
-            print(
-                f"  {bet['team']:<20} ML={bet['ml']:>+5d}  "
-                f"model={bet['p_model']:.1%}  edge={bet['edge']:+.1%}  "
-                f"Kelly={bet['kelly_fraction']:.1%}"
-            )
-    else:
-        print("\nNo betting signals (no market lines or edge below threshold)")
-
-    return str(path)
-
-
-# ---------------------------------------------------------------------------
-# Mock fixtures
-# ---------------------------------------------------------------------------
-
-def _mock_torvik_data() -> Dict[str, Dict]:
-    """Minimal mock for --mock mode. Mirrors 2026 tournament top seeds."""
-    return {
-        "Duke":      {"AdjEM": 36.69, "AdjT": 67.5},
-        "Michigan":  {"AdjEM": 36.61, "AdjT": 65.2},
-        "Arizona":   {"AdjEM": 35.54, "AdjT": 69.1},
-        "Florida":   {"AdjEM": 33.82, "AdjT": 68.3},
-        "Illinois":  {"AdjEM": 33.73, "AdjT": 66.8},
-        "Purdue":    {"AdjEM": 33.06, "AdjT": 63.5},
-        "Houston":   {"AdjEM": 32.95, "AdjT": 64.2},
-        "Iowa St":   {"AdjEM": 31.14, "AdjT": 67.1},
-    }
+    print(f"\n=== KELLY BET SIGNALS ({len(bets)} bets, edge >= 2%) ===")
+    print(f"  {'Team':<22} {'Matchup':<35} {'ML':>6}  {'Model':>7}  {'Mkt':>7}  {'Edge':>6}  {'Kelly':>6}")
+    print("  " + "-" * 95)
+    for b in bets[:10]:
+        short_matchup = b["matchup"][:33]
+        print(
+            f"  {b['team']:<22} {short_matchup:<35} {b['ml']:>+6d}"
+            f"  {b['p_model']:>6.1%}  {b['p_mkt']:>6.1%}"
+            f"  {b['edge']:>+6.1%}  {b['kelly']:>5.1%}"
+        )
 
 
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
-def run(
-    year: int,
-    bracket: Dict[str, List[str]],
-    mock: bool = False,
-    n_sims: int = 250_000,
-    output_dir: str = "brackets/2026/",
-) -> Dict:
-    """
-    Run the full prediction pipeline.
+def main():
+    parser = argparse.ArgumentParser(description="2026 NCAA tournament pipeline orchestrator")
+    parser.add_argument(
+        "--mock",
+        action="store_true",
+        help="Use fixture market lines (no API call)",
+    )
+    parser.add_argument(
+        "--skip-lines",
+        action="store_true",
+        help="Skip market lines refresh, use existing market_lines.json",
+    )
+    args = parser.parse_args()
 
-    Args:
-        year:       Tournament year (e.g. 2026)
-        bracket:    {region: [team_name x 16]} in seed order — must be provided
-        mock:       True = skip all API calls, use fixture data
-        n_sims:     Monte Carlo iterations
-        output_dir: Where to write results JSON
+    print("=== 2026 NCAA Tournament Pipeline ===\n")
 
-    Returns:
-        Pipeline output dict (same as results JSON)
-    """
-    logger.info(f"=== NCAAB Men's Prediction Pipeline — {year} ===")
+    # Step 1: Market lines
+    if args.skip_lines:
+        if MARKET_LINES_PATH.exists():
+            with open(MARKET_LINES_PATH, encoding="utf-8") as f:
+                market_lines = json.load(f)
+            print(f"Using existing market_lines.json ({len(market_lines)} lines)")
+        else:
+            print(f"WARNING: {MARKET_LINES_PATH} not found and --skip-lines set. Running without lines.")
+            market_lines = {}
+    else:
+        market_lines = refresh_market_lines(mock=args.mock)
 
-    # Stage 1 (parallel): BartTorvik + market lines
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-        f_torvik = pool.submit(stage_fetch_torvik, year, mock)
-        f_odds   = pool.submit(stage_fetch_odds, mock)
-        teams_raw     = f_torvik.result()
-        market_lines  = f_odds.result()
+    # Step 2: Simulation
+    run_simulation()
 
-    # Filter to bracket teams only
-    all_bracket_teams = [t for region in bracket.values() for t in region]
-    teams_bracket = {t: teams_raw.get(t) for t in all_bracket_teams}
-    missing = [t for t, v in teams_bracket.items() if v is None]
-    if missing:
-        logger.warning(f"Missing Torvik data for {len(missing)} teams: {missing[:5]}...")
+    # Step 3: Results display
+    results = display_results()
 
-    # Stage 2: Injury adjustments
-    teams_adjusted = stage_injury_adjustments(teams_bracket)
+    # Step 4: Kelly sizing
+    show_kelly_bets(results, market_lines)
 
-    # Stage 3: Win probability
-    wp_table = stage_win_probability(teams_adjusted, market_lines)
-
-    # Stage 4: Monte Carlo
-    sim_results = stage_monte_carlo(bracket, wp_table, n_sims=n_sims)
-
-    # Stage 5: Kelly sizing
-    bets = stage_kelly_sizing(sim_results, market_lines)
-
-    # Stage 6: Output
-    stage_output(sim_results, bets, year, output_dir)
-
-    return {"sim_results": sim_results, "bets": bets}
+    print("\n=== Pipeline complete ===")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="NCAAB Men's prediction pipeline")
-    parser.add_argument("--year",       type=int, default=2026)
-    parser.add_argument("--mock",       action="store_true")
-    parser.add_argument("--n-sims",     type=int, default=250_000)
-    parser.add_argument("--output-dir", default="brackets/2026/")
-    args = parser.parse_args()
-
-    # Import bracket from simulate.py
-    try:
-        sys.path.insert(0, str(Path(__file__).parent.parent / "brackets" / str(args.year)))
-        from simulate import BRACKET
-    except ImportError:
-        logger.error("Could not import BRACKET from brackets/{year}/simulate.py. Run with existing bracket.")
-        sys.exit(1)
-
-    run(
-        year=args.year,
-        bracket=BRACKET,
-        mock=args.mock,
-        n_sims=args.n_sims,
-        output_dir=args.output_dir,
-    )
+    main()
