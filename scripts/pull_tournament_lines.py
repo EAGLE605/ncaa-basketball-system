@@ -29,6 +29,12 @@ import logging
 import sys
 from pathlib import Path
 
+from dotenv import load_dotenv
+
+# Load gateway .env first (canonical key store), then project .env (override)
+load_dotenv(Path.home() / "mcp-gateway" / ".env")
+load_dotenv(override=False)  # project .env, don't override gateway values
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
